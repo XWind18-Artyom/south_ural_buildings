@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Карта зданий — Челябинск</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<style>
+    html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100vh;
+        height: 100dvh;
+        background: #05070d;
+        overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+    #map {
+        width: 100%;
+        height: 100vh;
+        height: 100dvh;
+        background: #05070d;
+    }
+
+    /* Многослойное неоновое свечение поверх WebGL-канвы — усиливает "живой" объём зданий */
+    .maplibregl-canvas {
+        filter: drop-shadow(0 0 3px rgba(0, 229, 255, 0.35))
+                drop-shadow(0 0 7px rgba(247, 37, 133, 0.25));
+    }
+
+    /* Навигационный контрол MapLibre — сдвинут ниже логотипа, чтобы не налегать на него */
+    .maplibregl-ctrl-top-right {
+        margin-top: 78px;
+    }
+    @media (min-width: 600px) {
+        .maplibregl-ctrl-top-right { margin-top: 96px; }
+    }
+
+    /* Всплывающая подсказка о здании */
+    .maplibregl-popup-content {
+        background: rgba(16, 18, 28, 0.97) !important;
+        color: #fff !important;
+        border: 1px solid #f72585 !important;
+        border-radius: 6px !important;
+        font-size: 12px !important;
+        padding: 8px 10px !important;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 10px rgba(247, 37, 133, 0.25) !important;
+        max-width: 240px !important;
+    }
+    .maplibregl-popup-tip { border-top-color: #f72585 !important; }
+
+    /* Легенда — нижний правый угол */
+    .legend {
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        z-index: 1000;
+        background: rgba(16, 18, 28, 0.9);
+        color: #e8e8e8;
+        padding: 12px 16px;
+        border-radius: 8px;
+        line-height: 1.6;
+        font-size: 13px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        border: 1px solid rgba(255,255,255,0.1);
+    }
+    .legend strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 14px;
+        color: #fff;
+    }
+    .legend i {
+        width: 16px;
+        height: 16px;
+        display: inline-block;
+        margin-right: 8px;
+        border-radius: 3px;
+        vertical-align: middle;
+        box-shadow: 0 0 6px currentColor;
+    }
+
+    /* Индикатор загрузки — центр */
+    #loading {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #e8e8e8;
+        font-size: 15px;
+        z-index: 9999;
+        background: rgba(16, 18, 28, 0.9);
+        padding: 16px 24px;
+        border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    /* Логотип проекта — верхний правый угол */
+    .project-logo {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 1000;
+        max-width: 130px;
+        filter: drop-shadow(0 2px 8px rgba(0,0,0,0.6));
+        pointer-events: none;
+        user-select: none;
+    }
+    @media (min-width: 600px) {
+        .project-logo { max-width: 170px; }
+    }
+
+    /* Подпись автора — нижний левый угол, самый низ */
+    .author-credit {
+        position: fixed;
+        bottom: 8px;
+        left: 12px;
+        z-index: 1000;
+        color: rgba(232, 232, 232, 0.85);
+        font-size: 16px;
+        background: rgba(16, 18, 28, 0.6);
+        padding: 6px 14px;
+        border-radius: 6px;
+        pointer-events: none;
+        user-select: none;
+    }
+
+    /* ---------- Кнопки про город — верхний левый угол ---------- */
+    .info-buttons {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 1000;
+        display: flex;
+        gap: 8px;
+    }
+    .info-btn {
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        border: 1px solid rgba(0, 229, 255, 0.4);
+        background: rgba(16, 18, 28, 0.9);
+        color: #00e5ff;
+        font-size: 18px;
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .info-btn:hover { background: rgba(28, 32, 46, 0.95); transform: translateY(-1px); box-shadow: 0 0 10px rgba(0, 229, 255, 0.4); }
+    .info-btn.active { border-color: #00e5ff; color: #fff; background: rgba(10, 45, 55, 0.95); box-shadow: 0 0 12px rgba(0, 229, 255, 0.5); }
+
+    /* Единая инфо-панель под кнопками — переключаемая по вкладкам,
+       поэтому одновременно видна только одна и она никогда ни с чем не пересекается */
+    .info-panel {
+        position: fixed;
+        top: 62px;
+        left: 12px;
+        z-index: 1000;
+        width: 270px;
+        max-height: 62vh;
+        overflow-y: auto;
+        background: rgba(16, 18, 28, 0.97);
+        color: #e8e8e8;
+        border-radius: 10px;
+        border: 1px solid rgba(0, 229, 255, 0.3);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.55), 0 0 14px rgba(0, 229, 255, 0.12);
+        padding: 14px 16px;
+        font-size: 13px;
+        transform: translateY(-12px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .info-panel.open {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+    }
+    .info-panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+    .info-panel-header strong {
+        font-size: 15px;
+        color: #00e5ff;
+    }
+    .info-close {
+        cursor: pointer;
+        color: #999;
+        font-size: 14px;
+        padding: 0 4px;
+    }
+    .info-close:hover { color: #fff; }
+    .info-panel p { margin: 0 0 8px 0; line-height: 1.5; }
+    .info-panel ul { margin: 0 0 6px 0; padding-left: 18px; }
+    .info-panel li { margin-bottom: 5px; line-height: 1.4; }
+    .info-facts div { margin-bottom: 4px; line-height: 1.5; }
+    .info-facts b { color: #fff; }
+    .info-panel canvas { margin-top: 10px; max-width: 100%; }
+    .info-caption {
+        margin-top: 6px;
+        font-size: 10px;
+        color: rgba(232,232,232,0.5);
+    }
+
+    /* ---------- Кнопка 3D-режима — нижний левый угол, над подписью автора ---------- */
+    .tilt-toggle {
+        position: fixed;
+        bottom: 52px;
+        left: 12px;
+        z-index: 1000;
+        padding: 8px 14px;
+        border-radius: 20px;
+        border: 1px solid rgba(0, 229, 255, 0.4);
+        background: rgba(16, 18, 28, 0.9);
+        color: #00e5ff;
+        font-size: 13px;
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    }
+    .tilt-toggle:hover { background: rgba(28, 32, 46, 0.95); }
+    .tilt-toggle.active { border-color: #00e5ff; color: #fff; background: rgba(10, 45, 55, 0.95); box-shadow: 0 0 12px rgba(0, 229, 255, 0.5); }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<img src="logo.png" alt="Карты Южного Урала" class="project-logo">
+<div class="author-credit">Автор: Лихалетов Артём Расулович</div>
+<div id="loading">Загрузка зданий…</div>
+
+<div class="info-buttons">
+    <button class="info-btn" id="btnHistory" title="История">📜</button>
+    <button class="info-btn" id="btnPopulation" title="Население">👥</button>
+    <button class="info-btn" id="btnSights" title="Достопримечательности">🏙️</button>
+</div>
+
+<div class="info-panel" id="panelHistory">
+    <div class="info-panel-header"><strong>История Челябинска</strong><span class="info-close" data-close="panelHistory">✕</span></div>
+    <p>Город основан 13 сентября 1736 года как Челябинская крепость на реке Миасс — форпост на пути из Зауралья в Оренбург. Статус города получил в 1781 году, став центром Челябинского уезда.</p>
+    <p>В годы Великой Отечественной войны сюда были эвакуированы десятки заводов, город стал крупнейшим производителем танков в стране и получил неофициальное имя «Танкоград», а позже — почётное звание «Город трудовой доблести».</p>
+    <p>15 февраля 2013 года над городом взорвался крупнейший метеорит за последние сто лет — его осколки хранятся в Государственном историческом музее Южного Урала. В 2027 году Челябинск станет культурной столицей России.</p>
+</div>
+
+<div class="info-panel" id="panelPopulation">
+    <div class="info-panel-header"><strong>Население</strong><span class="info-close" data-close="panelPopulation">✕</span></div>
+    <div class="info-facts">
+        <div>Регион: <b>Челябинская область</b></div>
+        <div>Население (2025): <b>≈1 176 770 чел.</b></div>
+        <div>Место в России: <b>8-е по численности</b></div>
+        <div>Пик численности: <b>≈1 202 371 чел. (2018)</b></div>
+    </div>
+    <canvas id="populationChart" width="230" height="140"></canvas>
+    <div class="info-caption">Динамика численности населения, 1926–2025</div>
+</div>
+
+<div class="info-panel" id="panelSights">
+    <div class="info-panel-header"><strong>Достопримечательности</strong><span class="info-close" data-close="panelSights">✕</span></div>
+    <ul>
+        <li><b>Кировка</b> — пешеходная улица в историческом центре, местный «Арбат» со скульптурами и кафе.</li>
+        <li><b>Государственный исторический музей Южного Урала</b> — основан в 1923 году, хранит осколки Челябинского метеорита.</li>
+        <li><b>Озеро Смолино и Шершнёвское водохранилище</b> — главные места отдыха горожан на воде.</li>
+        <li><b>Театр оперы и балета им. М. И. Глинки</b> и Челябинский драматический театр — центры культурной жизни.</li>
+        <li><b>Сквер и памятник «Сфера любви»</b> — популярное место у молодожёнов.</li>
+    </ul>
+</div>
+
+<button id="tiltToggle" class="tilt-toggle" title="Переключить объёмный вид">🧊 3D-вид</button>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script>
+    // ---------- НАСТРОЙКИ ----------
+    const DATA_URL = "https://raw.githubusercontent.com/XWind18-Artyom/south_ural_buildings/main/buldi.geojson";
+
+    // Яркая неоновая градиентная палитра (6 классов) под этажность —
+    // от холодного циана к пурпуру и раскалённо-жёлтому, с эффектом свечения
+    const COLORS = ["#00e5ff", "#7b2ff7", "#c724b1", "#ff2e63", "#ff9f1c", "#ffea00"];
+    const NO_DATA_COLOR = "#4a4a5a";
+    const HOVER_COLOR = "#ffffff";
+
+    // ---------- КАРТА (MapLibre GL, тёмная растровая подложка CARTO) ----------
+    const mapStyle = {
+        version: 8,
+        sources: {
+            'carto-dark': {
+                type: 'raster',
+                tiles: [
+                    'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                    'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                    'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                    'https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+                ],
+                tileSize: 256
+            }
+        },
+        layers: [
+            { id: 'carto-dark-layer', type: 'raster', source: 'carto-dark' }
+        ]
+    };
+
+    const map = new maplibregl.Map({
+        container: 'map',
+        style: mapStyle,
+        center: [61.4368, 55.1644], // Челябинск — стартовая точка, подстроится после загрузки данных
+        zoom: 12,
+        pitch: 55,
+        bearing: -18,
+        antialias: true,
+        attributionControl: false
+    });
+
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+
+    // Мягкое направленное освещение — делает объём 3D-зданий более выразительным
+    map.on('style.load', () => {
+        if (map.setLight) {
+            map.setLight({ anchor: 'viewport', color: '#ffffff', intensity: 0.45, position: [1.2, 90, 40] });
+        }
+    });
+
+    let tilted = true;
+    document.getElementById('tiltToggle').classList.add('active');
+
+    document.getElementById('tiltToggle').addEventListener('click', function () {
+        tilted = !tilted;
+        this.classList.toggle('active', tilted);
+        map.easeTo({ pitch: tilted ? 55 : 0, bearing: tilted ? -18 : 0, duration: 700 });
+    });
+
+    // ---------- ПЛОЩАДЬ ЗАСТРОЙКИ (приблизительный расчёт по контуру) ----------
+    function ringArea(ring, latRad) {
+        // Плоская аппроксимация площади многоугольника в м² (годится для небольших контуров зданий)
+        const R = 6371000;
+        let area = 0;
+        for (let i = 0; i < ring.length - 1; i++) {
+            const [lon1, lat1] = ring[i];
+            const [lon2, lat2] = ring[i + 1];
+            const x1 = lon1 * Math.PI / 180 * R * Math.cos(latRad);
+            const y1 = lat1 * Math.PI / 180 * R;
+            const x2 = lon2 * Math.PI / 180 * R * Math.cos(latRad);
+            const y2 = lat2 * Math.PI / 180 * R;
+            area += (x1 * y2 - x2 * y1);
+        }
+        return Math.abs(area / 2);
+    }
+
+    function estimateArea(geometry) {
+        try {
+            const polys = geometry.type === 'Polygon' ? [geometry.coordinates]
+                : geometry.type === 'MultiPolygon' ? geometry.coordinates
+                : null;
+            if (!polys) return null;
+            let total = 0;
+            polys.forEach(poly => {
+                const outer = poly[0];
+                const latRad = outer[0][1] * Math.PI / 180;
+                total += ringArea(outer, latRad);
+            });
+            return Math.round(total);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // ---------- ЗАГРУЗКА ЗДАНИЙ И 3D-ЭКСТРУЗИЯ ----------
+    let hoveredId = null;
+    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10 });
+
+    function buildLabel(feature) {
+        const p = feature.properties || {};
+        const levels = p.B_LEVELS;
+        const street = p.A_STRT;
+        const houseNum = p.A_HSNMBR;
+        const name = p.B_NAME || p.NAME || p.name;
+        const btype = p.B_TYPE || p.TYPE || p.building || p.BUILDING;
+        const material = p.B_MATERIAL || p.MATERIAL || p.building_material;
+        const roof = p.B_ROOF || p.ROOF || p.roof_shape;
+        const condition = p.B_CONDT || p.CONDITION || p.condition;
+        const postcode = p.A_POST || p.POSTCODE || p.postcode;
+        const year = p.B_YEAR || p.YEAR_BUILT || p.start_date || p.YEAR;
+        const usage = p.B_USE || p.USE || p.amenity;
+        const heightM = p.B_HEIGHT || p.HEIGHT || p.height;
+
+        const lines = [];
+        if (name) lines.push(`<strong>${name}</strong>`);
+
+        let addressText = "";
+        if (street) {
+            addressText = street;
+            if (houseNum) addressText += `, ${houseNum}`;
+        }
+        if (postcode) addressText += addressText ? `, ${postcode}` : postcode;
+        if (addressText) lines.push(addressText);
+
+        lines.push((levels === null || levels === undefined || levels === "")
+            ? "Этажность неизвестна"
+            : `Этажей: ${levels}`);
+
+        if (heightM) lines.push(`Высота: ${heightM} м`);
+        else if (levels && !isNaN(parseFloat(levels))) lines.push(`Высота (оценка): ~${Math.round(parseFloat(levels) * 3)} м`);
+
+        if (btype) lines.push(`Тип: ${btype}`);
+        if (usage) lines.push(`Назначение: ${usage}`);
+        if (material) lines.push(`Материал: ${material}`);
+        if (roof) lines.push(`Кровля: ${roof}`);
+        if (condition) lines.push(`Состояние: ${condition}`);
+        if (year) lines.push(`Год постройки: ${year}`);
+
+        const area = estimateArea(feature.geometry);
+        if (area) lines.push(`Площадь застройки: ~${area.toLocaleString('ru-RU')} м²`);
+
+        return lines.join("<br>");
+    }
+
+    map.on('load', () => {
+        fetch(DATA_URL)
+            .then(res => {
+                if (!res.ok) throw new Error("Не удалось загрузить данные: " + res.status);
+                return res.json();
+            })
+            .then(geojson => {
+                map.addSource('buildings', {
+                    type: 'geojson',
+                    data: geojson,
+                    generateId: true
+                });
+
+                map.addLayer({
+                    id: 'buildings-3d',
+                    type: 'fill-extrusion',
+                    source: 'buildings',
+                    paint: {
+                        'fill-extrusion-color': [
+                            'case',
+                            ['boolean', ['feature-state', 'hover'], false], HOVER_COLOR,
+                            [
+                                'interpolate', ['linear'],
+                                ['coalesce', ['to-number', ['get', 'B_LEVELS']], -1],
+                                -1, NO_DATA_COLOR,
+                                0, COLORS[0],
+                                1, COLORS[0],
+                                2, COLORS[1],
+                                3, COLORS[2],
+                                5, COLORS[3],
+                                9, COLORS[4],
+                                16, COLORS[5]
+                            ]
+                        ],
+                        'fill-extrusion-height': [
+                            '*', ['coalesce', ['to-number', ['get', 'B_LEVELS']], 1.5], 3
+                        ],
+                        'fill-extrusion-base': 0,
+                        'fill-extrusion-opacity': 0.92
+                    }
+                });
+
+                // Границы данных
+                const bounds = new maplibregl.LngLatBounds();
+                (geojson.features || []).forEach(f => {
+                    const coords = f.geometry && f.geometry.type === 'Polygon'
+                        ? f.geometry.coordinates.flat(1)
+                        : f.geometry && f.geometry.type === 'MultiPolygon'
+                            ? f.geometry.coordinates.flat(2)
+                            : [];
+                    coords.forEach(c => bounds.extend(c));
+                });
+                if (!bounds.isEmpty()) {
+                    map.fitBounds(bounds, { padding: 40, duration: 0 });
+                }
+
+                document.getElementById('loading').style.display = 'none';
+
+                // Наведение / подсветка / подсказка
+                map.on('mousemove', 'buildings-3d', (e) => {
+                    map.getCanvas().style.cursor = 'pointer';
+                    if (!e.features.length) return;
+
+                    if (hoveredId !== null) {
+                        map.setFeatureState({ source: 'buildings', id: hoveredId }, { hover: false });
+                    }
+                    hoveredId = e.features[0].id;
+                    map.setFeatureState({ source: 'buildings', id: hoveredId }, { hover: true });
+
+                    popup.setLngLat(e.lngLat)
+                        .setHTML(buildLabel(e.features[0]))
+                        .addTo(map);
+                });
+
+                map.on('mouseleave', 'buildings-3d', () => {
+                    map.getCanvas().style.cursor = '';
+                    if (hoveredId !== null) {
+                        map.setFeatureState({ source: 'buildings', id: hoveredId }, { hover: false });
+                    }
+                    hoveredId = null;
+                    popup.remove();
+                });
+            })
+            .catch(err => {
+                document.getElementById('loading').textContent = "Ошибка загрузки данных: " + err.message;
+            });
+    });
+
+    // ---------- ЛЕГЕНДА ----------
+    const legendDiv = document.createElement('div');
+    legendDiv.className = 'legend';
+    legendDiv.innerHTML = "<strong>Количество этажей</strong>";
+    [
+        ["1 этаж", COLORS[0]],
+        ["2 этажа", COLORS[1]],
+        ["3 этажа", COLORS[2]],
+        ["4–5 этажей", COLORS[3]],
+        ["6–9 этажей", COLORS[4]],
+        ["10+ этажей", COLORS[5]],
+        ["Нет данных", NO_DATA_COLOR]
+    ].forEach(([label, color]) => {
+        legendDiv.innerHTML += `<div style="color:${color}"><i style="background:${color}"></i><span style="color:#e8e8e8">${label}</span></div>`;
+    });
+    document.body.appendChild(legendDiv);
+
+    // ---------- ИНФО-ПАНЕЛИ О ГОРОДЕ (вкладки, чтобы ничего не пересекалось) ----------
+    const panels = {
+        btnHistory: document.getElementById('panelHistory'),
+        btnPopulation: document.getElementById('panelPopulation'),
+        btnSights: document.getElementById('panelSights')
+    };
+
+    function closeAllPanels() {
+        Object.values(panels).forEach(p => p.classList.remove('open'));
+        document.querySelectorAll('.info-btn').forEach(b => b.classList.remove('active'));
+    }
+
+    Object.keys(panels).forEach(btnId => {
+        document.getElementById(btnId).addEventListener('click', function () {
+            const panel = panels[btnId];
+            const wasOpen = panel.classList.contains('open');
+            closeAllPanels();
+            if (!wasOpen) {
+                panel.classList.add('open');
+                this.classList.add('active');
+            }
+        });
+    });
+
+    document.querySelectorAll('.info-close').forEach(el => {
+        el.addEventListener('click', closeAllPanels);
+    });
+
+    // Численность населения Челябинска по годам (данные Росстата и переписей)
+    new Chart(document.getElementById('populationChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: ['1926', '1959', '1976', '2018', '2025'],
+            datasets: [{
+                label: 'Население, чел.',
+                data: [60000, 689000, 1000000, 1202371, 1176770],
+                borderColor: '#00e5ff',
+                backgroundColor: 'rgba(0, 229, 255, 0.2)',
+                pointBackgroundColor: '#ff2e63',
+                pointRadius: 3,
+                tension: 0.25,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { color: '#ccc', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                y: { ticks: { color: '#ccc', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' } }
+            }
+        }
+    });
+</script>
+
+</body>
+</html>
